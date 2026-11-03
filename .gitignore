@@ -1,0 +1,8 @@
+.codex/skills/sandstorm-app-author/
+.claude/skills/sandstorm-app-author/
+__pycache__/
+*.pyc
+*.spk
+.sandstorm/.generated/
+.sandstorm/box.local.toml
+data/
