@@ -13,8 +13,15 @@ opt/app
 opt/app/.sandstorm/launcher.sh
 opt/app/app.py
 opt/app/public/app.js
+opt/app/public/celebration.js
+opt/app/public/fonts/Oxanium.ttf
+opt/app/public/guide.js
 opt/app/public/index.html
+opt/app/public/lookup.js
+opt/app/public/navigation.js
 opt/app/public/powerbox.json
+opt/app/public/print.css
+opt/app/public/print.js
 opt/app/public/style.css
 proc/cpuinfo
 sandstorm-http-bridge
@@ -126,7 +133,7 @@ usr/lib/x86_64-linux-gnu/libbz2.so.1.0.4
 usr/lib/x86_64-linux-gnu/libc.so.6
 usr/lib/x86_64-linux-gnu/libcrypto.so.3
 usr/lib/x86_64-linux-gnu/libexpat.so.1
-usr/lib/x86_64-linux-gnu/libexpat.so.1.12.3
+usr/lib/x86_64-linux-gnu/libexpat.so.1.13.0
 usr/lib/x86_64-linux-gnu/liblzma.so.5
 usr/lib/x86_64-linux-gnu/liblzma.so.5.8.1
 usr/lib/x86_64-linux-gnu/libm.so.6
