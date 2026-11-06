@@ -18,6 +18,12 @@ for(const dialog of document.querySelectorAll('dialog')) {
   });
   dialog.addEventListener('close',()=>{backgroundPress=false;});
 }
+$('stats').addEventListener('dblclick',event=>{
+  if(event.target.closest('strong')){event.preventDefault();CardCelebration.start(Object.values(state.cards));}
+});
+$('stats').addEventListener('keydown',event=>{
+  if(event.target.closest('strong') && ['Enter',' '].includes(event.key)){event.preventDefault();CardCelebration.start(Object.values(state.cards));}
+});
 const types = ['Grass','Fire','Water','Lightning','Psychic','Fighting','Darkness','Metal','Dragon','Fairy','Colorless'];
 let state, selected = null, resolved = [], importRevision, importScope = '', busy = false;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -51,7 +57,7 @@ function render() {
   $('collection-tab').classList.toggle('active', !deck);
   $('deck-nav').innerHTML = state.decks.map(d=>`<button class="nav ${d.id===selected?'active':''}" data-deck="${esc(d.id)}">${esc(d.name)} <small>· ${total(d)}</small></button>`).join('');
   $('deck-nav').querySelectorAll('button').forEach(b=>b.onclick=()=>{selected=b.dataset.deck;render();});
-  $('stats').innerHTML = `<strong>${Object.values(state.cards).reduce((n,c)=>n+c.quantity,0)}</strong> cards<br>${Object.values(state.cards).filter(c=>c.quantity>0).length} entries · ${state.decks.length} decks`;
+  $('stats').innerHTML = `<strong role="button" tabindex="0" aria-label="Play card celebration">${Object.values(state.cards).reduce((n,c)=>n+c.quantity,0)}</strong> cards<br>${Object.values(state.cards).filter(c=>c.quantity>0).length} entries · ${state.decks.length} decks`;
   for (const id of ['new-deck','import-open','add-open','retry-images']) $(id).hidden = !state.canEdit;
   $('builder-guide').hidden = !deck; $('deck-settings').hidden = !deck; $('deck-list').hidden = !deck;
   if (deck) { renderDeck(deck); renderGuide(deck); }

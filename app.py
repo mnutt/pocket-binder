@@ -318,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
             unchanged = etag in validators or '*' in validators
             return self.send(304 if unchanged else 200, b'' if unchanged else row[0], 'image/webp',
                              cache_control='private, max-age=86400', etag=etag)
-        files = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/guide.js': ('guide.js', 'text/javascript'), '/lookup.js': ('lookup.js', 'text/javascript'), '/navigation.js': ('navigation.js', 'text/javascript'), '/print.js': ('print.js', 'text/javascript'), '/print.css': ('print.css', 'text/css')}
+        files = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript'), '/celebration.js': ('celebration.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/guide.js': ('guide.js', 'text/javascript'), '/lookup.js': ('lookup.js', 'text/javascript'), '/navigation.js': ('navigation.js', 'text/javascript'), '/print.js': ('print.js', 'text/javascript'), '/print.css': ('print.css', 'text/css')}
         files['/fonts/Oxanium.ttf'] = ('fonts/Oxanium.ttf', 'font/ttf')
         files['/fonts/OFL-Oxanium.txt'] = ('fonts/OFL-Oxanium.txt', 'text/plain; charset=utf-8')
         if path in files:

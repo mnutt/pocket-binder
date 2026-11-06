@@ -372,7 +372,7 @@ class HTTPTests(unittest.TestCase):
                     urllib.request.urlopen(base+'/api/export/deck/missing')
                 self.assertEqual(caught.exception.code, 404)
                 caught.exception.close()
-                for route in ['/', '/app.js', '/lookup.js', '/style.css', '/navigation.js', '/print.js', '/print.css']:
+                for route in ['/', '/app.js', '/lookup.js', '/celebration.js', '/style.css', '/navigation.js', '/print.js', '/print.css']:
                     with urllib.request.urlopen(base+route) as response:
                         self.assertEqual(response.status, 200)
                 with urllib.request.urlopen(base+'/fonts/Oxanium.ttf') as response:
