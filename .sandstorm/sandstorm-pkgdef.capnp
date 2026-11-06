@@ -27,6 +27,8 @@ const pkgdef :Spk.PackageDefinition = (
         (width = 1280, height = 831, jpeg = embed "assets/screenshot-2.jpg")
       ],
       categories = [games],
+      website = "https://github.com/mnutt/pocket-binder",
+      codeUrl = "https://github.com/mnutt/pocket-binder",
       author = (contactEmail = "michael@nutt.im", pgpSignature = embed "assets/author-signed-statement.pgp"),
       pgpKeyring = embed "assets/author-keyring.pgp",
       license = (openSource = mit, notices = (defaultText = embed "../public/fonts/OFL-Oxanium.txt"))
