@@ -7,9 +7,11 @@ import json
 import os
 import re
 import sqlite3
+from html import escape
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit, quote
+from urllib.parse import urlsplit, quote, parse_qs
 
 TYPES = ['Grass', 'Fire', 'Water', 'Lightning', 'Psychic', 'Fighting', 'Darkness', 'Metal', 'Dragon', 'Fairy', 'Colorless']
 DATA = Path(os.environ.get('DATA_DIR', '/var/pocket-binder'))
@@ -52,7 +54,7 @@ def parse_csv(text):
     require(len(keys) == len(set(keys)), 'Duplicate CSV column names.')
     energy_sheet = 'Energy' in reader.fieldnames and 'type' in keys
     scope = '' if 'inventorycategory' in keys else 'Energy' if energy_sheet else 'Trainer' if 'category' in keys else 'Pokemon' if 'hp' in keys else ''
-    require(energy_sheet or 'id' in keys or ('set' in keys and 'number' in keys), 'Include card_id or both set and card_number columns, or Energy,Qty,Type.')
+    require(energy_sheet or 'id' in keys or ('number' in keys and any(k in keys for k in ('set', 'setcode', 'name'))), 'Include card_id, or card_number with set, set_code, or name, or Energy,Qty,Type.')
     rows = []
     for line, raw in enumerate(reader, 2):
         require(None not in raw, f'Row {line}: too many columns.')
@@ -61,7 +63,7 @@ def parse_csv(text):
         row_scope = row.get('inventorycategory', scope)
         require(row_scope in ('', 'Pokemon', 'Trainer', 'Energy'), f'Row {line}: invalid inventory category.')
         pending = bool(row.get('name') and ('pending' in row.get('idstatus', '').lower() or row.get('printingstatus') == 'unresolved'))
-        require(row.get('id') or (row.get('set') and row.get('number')) or (pooled and row.get('name')) or pending, f'Row {line}: missing card ID or set/number.')
+        require(row.get('id') or ((row.get('set') or row.get('setcode') or row.get('name')) and row.get('number')) or (pooled and row.get('name')) or pending, f'Row {line}: missing card ID or set/number.')
         quantity = row.get('quantity', '1')
         require(quantity.isdigit() and 1 <= int(quantity) <= 100000, f'Row {line}: quantity must be a positive whole number.')
         identity = '|'.join(row.get(k, '').lower() for k in ('name', 'set', 'number'))
@@ -74,6 +76,60 @@ def parse_csv(text):
 def available(state, deck, card_id):
     reserved = sum(d['cards'].get(card_id, 0) for d in state['decks'] if d['id'] in set(deck['exclusions']))
     return state['cards'].get(card_id, {}).get('quantity', 0) - reserved - deck['cards'].get(card_id, 0)
+
+
+def export_csv(cards):
+    output = io.StringIO(newline='')
+    writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+    writer.writerow(['name', 'set', 'card_number', 'quantity', 'inventory_category', 'printing_status', 'type', 'hp', 'id_status', 'source', 'notes'])
+    for card in cards:
+        inventory = card.get('inventory') or {}
+        card_set = card.get('set') or {}
+        representative = card.get('representative')
+        writer.writerow([
+            card['name'],
+            '' if representative else inventory.get('set') or card_set.get('name') or card_set.get('id', ''),
+            '' if representative else inventory.get('number') or card.get('localId', ''),
+            card['quantity'], card.get('category', ''),
+            'unresolved' if card.get('unresolved') else 'representative' if representative else 'exact',
+            inventory.get('type') or ('Basic' if card.get('energyType') == 'Normal' else 'Special'),
+            card.get('hp') or '', inventory.get('idstatus', ''), inventory.get('source', ''), inventory.get('notes', ''),
+        ])
+    return output.getvalue()
+
+
+def inventory_print_html(cards, deck=None):
+    cards = sorted((c for c in cards if c['quantity'] > 0), key=lambda c: (c['name'].casefold(), (c.get('set') or {}).get('name', ''), c.get('localId', '')))
+    title = escape(deck['name']) if deck else 'Collection inventory'
+    back_url = './#deck=' + quote(deck['id'], safe='') if deck else './'
+    back_label = 'Back to deck' if deck else 'Back to collection'
+    count = sum(c['quantity'] for c in cards)
+    summary = f'{count} copies · {len(cards)} entries'
+    if deck:
+        cards.sort(key=lambda c: {'Pokemon': 0, 'Trainer': 1, 'Energy': 2}.get(c.get('category'), 3))
+        groups = [f'{sum(c["quantity"] for c in cards if c.get("category") == category)} {label}' for category, label in [('Pokemon', 'Pokémon'), ('Trainer', 'Trainers'), ('Energy', 'Energy')]]
+        summary = f'{count} / 60 cards · ' + ' · '.join(groups)
+    rows = []
+    for card in cards:
+        card_set = card.get('set') or {}
+        status = 'Unresolved printing' if card.get('unresolved') else 'Representative printing' if card.get('representative') else ''
+        values = [card['name'], card_set.get('name') or card_set.get('id') or status, card.get('localId', ''), card.get('category', ''), str(card['quantity'])]
+        rows.append(''.join(f'<td>{escape(str(value))}</td>' for value in values))
+    if rows:
+        # Use normal table pagination, not CSS multi-column table fragmentation.
+        midpoint = (len(rows) + 1) // 2
+        paired_rows = []
+        for index, left in enumerate(rows[:midpoint]):
+            right = rows[midpoint + index] if midpoint + index < len(rows) else '<td colspan="5"></td>'
+            paired_rows.append('<tr>' + left + '<td class="print-gutter" aria-hidden="true"></td>' + right + '</tr>')
+        headers = '<th scope="col">Card</th><th scope="col">Set</th><th scope="col">Number</th><th scope="col">Category</th><th scope="col">Qty</th>'
+        columns = '<col class="col-card"><col class="col-set"><col class="col-number"><col class="col-category"><col class="col-quantity">'
+        table = '<table class="print-columns"><colgroup>' + columns + '<col class="col-gutter">' + columns + '</colgroup><thead><tr>' + headers + '<th class="print-gutter" aria-hidden="true"></th>' + headers + '</tr></thead><tbody>' + ''.join(paired_rows) + '</tbody></table>'
+    else:
+        table = '<p>No cards in this deck.</p>' if deck else '<p>No cards in your inventory.</p>'
+    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="print.css"><script src="navigation.js" defer></script><script src="print.js" defer></script></head><body>
+<nav><a href="{back_url}">{back_label}</a><button id="print">Print</button></nav>
+<h1>{title}</h1><p class="summary">{summary}</p>{table}</body></html>'''
 
 
 def validate_decks(state):
@@ -117,6 +173,20 @@ class Store:
         require(payload.get('revision') == state['revision'], 'The collection changed in another tab. Reload and try again.')
         if action == 'decks':
             state['decks'] = payload['decks']
+        elif action in ('remove', 'trade'):
+            card = state['cards'].get(payload.get('id'))
+            require(card, 'Unknown card.')
+            quantity = integer(payload.get('quantity'), 1)
+            require(quantity <= card['quantity'], 'Not enough owned copies.')
+            if action == 'trade':
+                note = payload.get('note')
+                require(isinstance(note, str) and 0 < len(note.strip()) <= 2000, 'Enter a trade note of up to 2,000 characters.')
+                state.setdefault('trades', []).append({
+                    'card': {**card, 'quantity': quantity},
+                    'note': note.strip(), 'status': 'archived',
+                    'date': datetime.now(timezone.utc).isoformat(),
+                })
+            card['quantity'] -= quantity
         elif action == 'details':
             card = state['cards'].get(payload['id'])
             require(card and not card.get('unresolved'), 'Cannot refresh an unidentified card.')
@@ -142,7 +212,7 @@ class Store:
                 # Store JSON metadata only; images use a separate bounded endpoint.
                 require(not scope or card.get('category') == scope, 'Card does not match this import category.')
                 clean = {k: card[k] for k in ('id', 'name', 'set', 'localId', 'category', 'types', 'hp', 'stage', 'evolveFrom', 'retreat', 'suffix', 'detailsVersion', 'attacks', 'abilities', 'effect', 'rarity', 'energyType', 'trainerType', 'regulationMark', 'legal', 'image', 'inventory', 'unresolved', 'representative', 'representativeCardId') if k in card}
-                state['cards'][card_id] = {**clean, 'quantity': old.get('quantity', 0)}
+                state['cards'][card_id] = {**old, **clean, 'quantity': old.get('quantity', 0)}
             if payload['mode'] == 'replace':
                 for card in state['cards'].values():
                     if not scope or card.get('category') == scope:
@@ -187,19 +257,26 @@ class Handler(BaseHTTPRequestHandler):
         require(len(body) == length, 'Incomplete request body.')
         return body
 
-    def send(self, status, body, content_type='application/json'):
+    def send(self, status, body, content_type='application/json', filename=None, cache_control='no-store', etag=None):
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode()
         elif isinstance(body, str):
             body = body.encode()
         self.send_response(status)
         self.send_header('Content-Type', content_type)
-        self.send_header('Content-Length', str(len(body)))
+        if status != 304:
+            self.send_header('Content-Length', str(len(body)))
+        if filename:
+            safe_name = re.sub(r'[^a-zA-Z0-9 ._-]', '_', filename)
+            self.send_header('Content-Disposition', f'attachment; filename="{safe_name}"')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'")
+        self.send_header('Cache-Control', cache_control)
+        if etag:
+            self.send_header('ETag', etag)
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'")
         self.end_headers()
-        self.wfile.write(body)
+        if status != 304:
+            self.wfile.write(body)
 
     def can_edit(self):
         return 'edit' in [p.strip() for p in self.headers.get('X-Sandstorm-Permissions', '').split(',')]
@@ -212,10 +289,38 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {kind: {'query': query, 'connected': kind in saved} for kind, query in descriptors.items()})
         if path == '/api/state':
             return self.send(200, {**self.server.store.read(), 'canEdit': self.can_edit()})
+        if path == '/print-inventory':
+            return self.send(200, inventory_print_html(self.server.store.read()['cards'].values()), 'text/html; charset=utf-8')
+        if path == '/print-deck':
+            state = self.server.store.read()
+            deck_id = parse_qs(urlsplit(self.path).query).get('id', [''])[0]
+            deck = next((d for d in state['decks'] if d['id'] == deck_id), None)
+            if not deck:
+                return self.send(404, {'error': 'Deck not found.'})
+            cards = ({**state['cards'][card_id], 'quantity': quantity} for card_id, quantity in deck['cards'].items())
+            return self.send(200, inventory_print_html(cards, deck), 'text/html; charset=utf-8')
+        if path == '/api/export/collection':
+            cards = self.server.store.read()['cards'].values()
+            return self.send(200, export_csv(c for c in cards if c['quantity'] > 0), 'text/csv; charset=utf-8', 'collection.csv')
+        if path.startswith('/api/export/deck/'):
+            state = self.server.store.read()
+            deck = next((d for d in state['decks'] if d['id'] == path.removeprefix('/api/export/deck/')), None)
+            if not deck:
+                return self.send(404, {'error': 'Deck not found.'})
+            cards = ({**state['cards'][card_id], 'quantity': quantity} for card_id, quantity in deck['cards'].items())
+            return self.send(200, export_csv(cards), 'text/csv; charset=utf-8', deck['name'] + '.csv')
         if path.startswith('/images/'):
             row = self.server.store.db.execute('SELECT data FROM images WHERE id=?', (path[8:],)).fetchone()
-            return self.send(200, row[0], 'image/webp') if row else self.send(404, {'error': 'Image not cached.'})
-        files = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/guide.js': ('guide.js', 'text/javascript')}
+            if not row:
+                return self.send(404, {'error': 'Image not cached.'})
+            etag = '"' + hashlib.sha256(row[0]).hexdigest() + '"'
+            validators = [value.strip().removeprefix('W/') for value in self.headers.get('If-None-Match', '').split(',')]
+            unchanged = etag in validators or '*' in validators
+            return self.send(304 if unchanged else 200, b'' if unchanged else row[0], 'image/webp',
+                             cache_control='private, max-age=86400', etag=etag)
+        files = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/guide.js': ('guide.js', 'text/javascript'), '/lookup.js': ('lookup.js', 'text/javascript'), '/navigation.js': ('navigation.js', 'text/javascript'), '/print.js': ('print.js', 'text/javascript'), '/print.css': ('print.css', 'text/css')}
+        files['/fonts/Oxanium.ttf'] = ('fonts/Oxanium.ttf', 'font/ttf')
+        files['/fonts/OFL-Oxanium.txt'] = ('fonts/OFL-Oxanium.txt', 'text/plain; charset=utf-8')
         if path in files:
             name, mime = files[path]
             return self.send(200, (PUBLIC / name).read_bytes(), mime)
@@ -255,11 +360,16 @@ class Handler(BaseHTTPRequestHandler):
                 details = json.loads(bridge_request('http://tcgdex/cards/' + quote(source_id, safe=''), token=self.server.store.token('details')))
                 require(details.get('id') == source_id, 'Card source returned a different printing.')
                 return self.send(200, self.server.store.mutate('details', {'revision': payload['revision'], 'id': card['id'], 'details': details}))
-            if path == '/api/cache-image':
-                card = self.server.store.read()['cards'].get(payload['id'])
-                require(card, 'Unknown card.')
-                if self.server.store.db.execute('SELECT 1 FROM images WHERE id=?', (card['id'],)).fetchone():
+            if path in ('/api/cache-image', '/api/preview-image'):
+                card_id = payload['id']
+                require(isinstance(card_id, str) and re.fullmatch(r'[a-zA-Z0-9.-]{1,100}', card_id), 'Invalid card ID.')
+                card = self.server.store.read()['cards'].get(card_id)
+                require(card or path == '/api/preview-image', 'Unknown card.')
+                if self.server.store.db.execute('SELECT 1 FROM images WHERE id=?', (card_id,)).fetchone():
                     return self.send(200, {'ok': True})
+                if not card:
+                    card = json.loads(bridge_request('http://tcgdex/cards/' + quote(card_id, safe=''), token=self.server.store.token('details')))
+                    require(card.get('id') == card_id, 'Card source returned a different printing.')
                 url = urlsplit(card.get('image', ''))
                 require(url.scheme == 'https' and url.netloc == 'assets.tcgdex.net', 'This card has no supported face image.')
                 data = bridge_request('http://tcgdex' + url.path + '/high.webp', token=self.server.store.token('images'), limit=2000000)
@@ -267,7 +377,7 @@ class Handler(BaseHTTPRequestHandler):
                 with self.server.store.db:
                     self.server.store.db.execute('INSERT OR REPLACE INTO images VALUES (?, ?)', (card['id'], data))
                 return self.send(200, {'ok': True})
-            require(path in ('/api/import', '/api/decks'), 'Unknown action.')
+            require(path in ('/api/import', '/api/decks', '/api/remove', '/api/trade'), 'Unknown action.')
             self.send(200, self.server.store.mutate(path.removeprefix('/api/'), payload))
         except (ValueError, KeyError, TypeError, AttributeError, csv.Error, OSError, http.client.HTTPException) as error:
             self.send(400, {'error': str(error) or 'Invalid request.'})
